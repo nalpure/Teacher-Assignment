@@ -1,18 +1,20 @@
 from z3 import *
 
-import compute_pulp
-
-
 def compute_optimum(teachers, events, event_overlap_sets, desired_workdays, event_size, event_durations, possible_assignments, weights=[1,1,1,1], worst_case_distance=0, cost_threshold=0, step_size=0.5):
     """
-    Find the optimum solution with weights a1, a2, a3, a4
-    (average workday deviation, maximum workday deviation, cummulative linear distance, sum of priority 2 assignments)
+    Find the (sub-)optimum solution with weights a1, a2, a3, a4
+    (average relative workday deviation, maximum relative workday deviation, cummulative linear distance, sum of priority 2 assignments)
     Higher weight = More optimized (value minimized)
 
-    Returns all assignment-tuples which occur in the calculated optimal model.
+    Assigment tuples must be given in the following format: (teacher, event, priority, distance)
+
+    If a cost-threshold is given, not the optimum but a near-optimum (how close it is to the optimum is specified by cost-threshold) will 
+    be calculated via binary search. The step_size variable specifies the relative step size between each iteration.
+
+    Returns all assignment-tuples which occur in the calculated (sub-)optimal model.
     """
 
-    # double all values as half days can exist - float so Z3 doesn't get confused witht the objective function
+    # double all values as half days can exist - float so Z3 doesn't get confused with the objective function
     desired_workdays = {k : float(v*2) for (k,v) in desired_workdays.items()}
     event_durations = {k : float(v*2) for (k,v) in event_durations.items()}
 
@@ -42,52 +44,43 @@ def compute_optimum(teachers, events, event_overlap_sets, desired_workdays, even
     else:
         opt = Optimize()
 
+    #constraint0: If priority is 3, teacher MUST be assigned
+    for assignment in [a for a in possible_assignments if a[2] == 3]:
+        opt.add(
+            x[assignment] == 1,
+        )
 
     # constraint1: number of teachers needed per event
     num_available_per_event = {event : len(list(filter(lambda assignment: assignment[1] == event, possible_assignments))) for event in events}
     for event in events:
         num_teachers_to_assign = min(event_size[event], num_available_per_event[event])
-        opt.add(Sum( [If(x[assignment], 1, 0) for assignment in possible_assignments if assignment[1] == event] ) == num_teachers_to_assign)
+        opt.add(Sum( [If(x[a], 1, 0) for a in possible_assignments if a[1] == event] ) == num_teachers_to_assign)
 
 
     for teacher in teachers:
-        
-        # constraint2: max and min number of events for each teacher
-        max_events = len(events)
-        min_events = 0
-        num_assigned_events = Sum( [If(x[assignment], 1, 0) for assignment in possible_assignments if assignment[0] == teacher] )
-        opt.add(num_assigned_events >= min_events, num_assigned_events <= max_events)
-
-    
-        # constraint3: teacher can't work in multiple overlapping events
+        # constraint2: teacher can't work in overlapping events
         for overlapping_events in event_overlap_sets:
             opt.add(Sum( [If(x[assignment], 1, 0) for assignment in possible_assignments if assignment[1] in overlapping_events and assignment[0] == teacher] ) <= 1)
 
-        
-        # constraint4: delta (absolute over and underload of teacher)
+        # constraint3: delta (absolute over and underload of teacher)
         num_teacher_workdays = Sum( [If(x[assignment], event_durations[assignment[1]], 0) for assignment in possible_assignments if assignment[0] == teacher])
         opt.add(delta_plus[teacher] >= 0, delta_minus[teacher] >= 0)
         opt.add(delta_plus[teacher] - delta_minus[teacher] == num_teacher_workdays - desired_workdays[teacher])
 
-
-        # constraint5: DELTA (maximum relative deviation of wished to assigned workdays)
+        # constraint4: DELTA (maximum relative deviation of wished to assigned workdays)
         opt.add(DELTA >= (delta_plus[teacher] + delta_minus[teacher]) / desired_workdays[teacher])
 
-
-    """average_rel_workday_deviation = Sum( [(delta_plus[teacher] + delta_minus[teacher]) / max(1,desired_workdays[teacher]) for teacher in teachers] ) / len(teachers)
-    overall_distance = Sum( [If(x[assignment], assignment[3], 0) for assignment in possible_assignments])
-    num_prio2 = Sum( [If(x[assignment], float(assignment[2]-1), 0) for assignment in possible_assignments])"""
     average_rel_workday_deviation = Real('average_rel_workday_deviation')
     opt += average_rel_workday_deviation == Sum( [(delta_plus[teacher] + delta_minus[teacher]) / max(1,desired_workdays[teacher]) for teacher in teachers] ) / len(teachers)
     overall_distance = Real('overall_distance')
     opt += overall_distance == Sum( [If(x[assignment], assignment[3], 0) for assignment in possible_assignments])
-    num_prio2 = Real('num_prio2')
-    opt += num_prio2 == Sum( [If(x[assignment], float(assignment[2]-1), 0) for assignment in possible_assignments])
+    sum_priorities = Real('num_prio2')
+    opt += sum_priorities == Sum( [If(x[assignment], float(assignment[2]), 0) for assignment in possible_assignments])
 
     opt.add(cost == a1 * average_rel_workday_deviation \
         + a2 * DELTA     \
         + a3 * overall_distance / max(1, worst_case_distance) \
-        + a4 * num_prio2 / max(1, sum(event_size))
+        + a4 * (1 - ((sum_priorities / sum(event_size)) / 4))
     )
 
     def realToFloat(z3_real):
@@ -100,7 +93,7 @@ def compute_optimum(teachers, events, event_overlap_sets, desired_workdays, even
     if(cost_threshold):
         # get near-optimal model with binary search
         print("Searching for near-optimal model...")
-        lower_boundary = 0 #- sum([a[3] for a in possible_assignments])
+        lower_boundary = 0
         best_model = None
         
         if opt.check() == sat:
@@ -112,7 +105,6 @@ def compute_optimum(teachers, events, event_overlap_sets, desired_workdays, even
         step=0
         while(upper_boundary > lower_boundary + cost_threshold):
             test_value = max(upper_boundary - (upper_boundary - lower_boundary) * step_size, lower_boundary + cost_threshold)
-            #test_value = (upper_boundary + lower_boundary) / 2
             opt.push()
             opt.add(cost < test_value)
             print(f"Optimum is between {lower_boundary} and {upper_boundary}, searching for cost < ", test_value)
@@ -140,21 +132,21 @@ def compute_optimum(teachers, events, event_overlap_sets, desired_workdays, even
     # return optimal assignments
     optimal_assignments = []
     if best_model:
-        print("Best model found!")
+        print("Z3 Best model found!")
         print(realToFloat(best_model.evaluate(average_rel_workday_deviation))*a1)
         print(realToFloat(best_model.evaluate(DELTA))*a2)
         print(realToFloat(best_model.evaluate(overall_distance)) * a3  / worst_case_distance)
-        print(realToFloat(best_model.evaluate(num_prio2)) * a4 / sum(event_size))
+        print(realToFloat(best_model.evaluate(sum_priorities)) * a4 / sum(event_size))
         print("Overall costs:", realToFloat(best_model.evaluate(cost)), '\n')
         for assignment in possible_assignments:
             if best_model.evaluate(x[assignment]):
                 optimal_assignments.append(assignment)
-
-        """for teacher in teachers:
-            print(f"{teacher}: d+ {best_model.evaluate(delta_plus[teacher])}, d- {best_model.evaluate(delta_minus[teacher])}")
-        print("DELTA:::", best_model.evaluate(DELTA))      
-        print("min value:", best_model.evaluate(cost).as_decimal(2))"""
     else:
         print("No model was found!")
 
-    return best_model is not None, optimal_assignments
+    if best_model is None:
+        return_code = -1
+    else: 
+        return_code = 1
+
+    return return_code, optimal_assignments
