@@ -64,7 +64,7 @@ The scheduling preferences file contains two sheets:
 - `Anzahl Wunschtage`
 - `Übersicht Terminwünsche`
 
-#### `Anzahl Wunschtage`
+#### `Anzahl Wunschtage` (= number of desired workdays)
 
 Starting from row 3:
 
@@ -73,7 +73,7 @@ Starting from row 3:
 
 The sheet must be complete. Guide names must match the names used in the coordinates file.
 
-#### `Übersicht Terminwünsche`
+#### `Übersicht Terminwünsche` (= overview of workday preferences)
 
 Starting from row 3, each row represents one event.
 
@@ -152,7 +152,7 @@ The output allows users to inspect the generated assignment plan and understand 
 
 The optimization minimizes a cost function combining travel distance, guide preferences, and workload deviation.
 
-![Cost function](cost%20function.png)
+<img src="cost_function.png" alt="Cost function formula" width=500>
 
 The weighting parameters allow the user to adjust how strongly the individual criteria influence the resulting assignment plan.
 
@@ -186,23 +186,6 @@ The evaluation showed that **PuLP with CBC was considerably faster than Z3 with 
 
 The generated assignment plans were also found to be sensible when compared with manually created plans from previous years. With the standard weighting, the automated approach reduced travel distance while keeping the other criteria at a comparable level.
 
-## Repository Structure
-
-```text
-.
-├── input/
-├── testing/
-├── compute_pulp.py
-├── compute_z3.py
-├── data.py
-├── run.py
-├── run_console.py
-├── testing.py
-├── requirements.txt
-├── cost function.png
-├── paper.pdf
-└── presentation.pdf
-```
 
 ## Thesis
 
